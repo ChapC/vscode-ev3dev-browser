@@ -7,7 +7,6 @@ import * as vscode from 'vscode';
 import * as Observable from 'zen-observable';
 
 import { Brickd } from './brickd';
-import * as dnssd from './dnssd';
 
 /**
  * Object that represents a remote ev3dev device.
@@ -46,7 +45,7 @@ export class Device extends vscode.Disposable {
      */
     public readonly onDidDisconnect = this._onDidDisconnect.event;
 
-    constructor(private readonly service: dnssd.Service) {
+    constructor(private readonly service: DnssdService) {
         super(() => {
             this.disconnect();
             this._onWillConnect.dispose();
@@ -503,19 +502,11 @@ export class Device extends vscode.Disposable {
         });
     }
 
-    private static dnssdClient: dnssd.Client;
-    private static async getDnssdClient(): Promise<dnssd.Client> {
-        if (!Device.dnssdClient) {
-            Device.dnssdClient = await dnssd.getInstance();
-        }
-        return Device.dnssdClient;
-    }
-
-    private static additionalDeviceToDnssdService(device: AdditionalDevice): dnssd.Service {
-        const txt: dnssd.TxtRecords = {};
+    private static additionalDeviceToDnssdService(device: AdditionalDevice): DnssdService {
+        const txt: TxtRecords = {};
         txt['ev3dev.robot.user'] = device.username || 'robot';
         txt['ev3dev.robot.home'] = device.homeDirectory || `/home/${txt['ev3dev.robot.user']}`;
-        return <dnssd.Service>{
+        return <DnssdService>{
             name: device.name,
             address: device.ipAddress,
             ipv: 'IPv4',
@@ -543,131 +534,32 @@ export class Device extends vscode.Disposable {
     }
 
     /**
-     * Use a quick-pick to browse discovered devices and select one.
+     * Use an input box to prompt for an IP address and create a Device object matching it.
      * @returns A new Device or undefined if the user canceled the request
      */
     public static async pickDevice(): Promise<Device | undefined> {
-        const configItems = this.getServicesFromConfig();
-        const manualEntry = <ServiceItem>{
-            label: "I don't see my device..."
-        };
-
-        const selectedItem = await new Promise<ServiceItem>(async (resolve, reject) => {
-            // start browsing for devices
-            const dnssdClient = await Device.getDnssdClient();
-            const browser = await dnssdClient.createBrowser({
-                ipv: 'IPv6',
-                service: 'sftp-ssh'
-            });
-            const items = new Array<ServiceItem>();
-            let cancelSource: vscode.CancellationTokenSource | undefined;
-            let done = false;
-
-            // if a device is added or removed, cancel the quick-pick
-            // and then show a new one with the update list
-            browser.on('added', (service) => {
-                if (service.txt['ev3dev.robot.home']) {
-                    // this looks like an ev3dev device
-                    const ifaces = os.networkInterfaces();
-                    for (const ifaceName in ifaces) {
-                        if (ifaces[ifaceName].find(v => (<os.NetworkInterfaceInfoIPv6>v).scopeid === service.iface)) {
-                            (<any>service)['ifaceName'] = ifaceName;
-                            break;
-                        }
-                    }
-                    const item = new ServiceItem(service);
-                    items.push(item);
-                    cancelSource?.cancel();
+        const ipAddress = await vscode.window.showInputBox({
+            ignoreFocusOut: true,
+            prompt: "Enter the IP address of the device",
+            placeHolder: 'Example: "192.168.137.3"',
+            validateInput: (v) => {
+                if (!/^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(v)) {
+                    return 'Not a valid IP address';
                 }
-            });
-            browser.on('removed', (service) => {
-                const index = items.findIndex(si => si.service === service);
-                if (index > -1) {
-                    items.splice(index, 1);
-                    cancelSource?.cancel();
-                }
-            });
-
-            // if there is a browser error, cancel the quick-pick and show
-            // an error message
-            browser.on('error', err => {
-                cancelSource?.cancel();
-                browser.destroy();
-                done = true;
-                reject(err);
-            });
-
-            await browser.start();
-
-            while (!done) {
-                cancelSource = new vscode.CancellationTokenSource();
-                // using this promise in the quick-pick will cause a progress
-                // bar to show if there are no items.
-                const list = new Array<ServiceItem>();
-                if (items) {
-                    list.push(...items);
-                }
-                if (configItems) {
-                    list.push(...configItems);
-                }
-                list.push(manualEntry);
-                const selected = await vscode.window.showQuickPick(list, {
-                    ignoreFocusOut: true,
-                    placeHolder: "Searching for devices... Select a device or press ESC to cancel."
-                }, cancelSource.token);
-                if (cancelSource.token.isCancellationRequested) {
-                    continue;
-                }
-                browser.destroy();
-                done = true;
-                resolve(selected);
+                return undefined;
             }
         });
-        if (!selectedItem) {
+        if (!ipAddress) {
             // cancelled
             return undefined;
         }
 
-        if (selectedItem === manualEntry) {
-            const name = await vscode.window.showInputBox({
-                ignoreFocusOut: true,
-                prompt: "Enter a name for the device",
-                placeHolder: 'Example: "ev3dev (Bluetooth)"'
-            });
-            if (!name) {
-                // cancelled
-                return undefined;
-            }
-            const ipAddress = await vscode.window.showInputBox({
-                ignoreFocusOut: true,
-                prompt: "Enter the IP address of the device",
-                placeHolder: 'Example: "192.168.137.3"',
-                validateInput: (v) => {
-                    if (!/^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(v)) {
-                        return 'Not a valid IP address';
-                    }
-                    return undefined;
-                }
-            });
-            if (!ipAddress) {
-                // cancelled
-                return undefined;
-            }
+        const device = <AdditionalDevice>{
+            name: `ev3dev device (${ipAddress})`,
+            ipAddress: ipAddress
+        };
 
-            const device = <AdditionalDevice>{
-                name: name,
-                ipAddress: ipAddress
-            };
-
-            const config = vscode.workspace.getConfiguration('ev3devBrowser');
-            const existing = config.get<AdditionalDevice[]>('additionalDevices', []);
-            existing.push(device);
-            config.update('additionalDevices', existing, vscode.ConfigurationTarget.Global);
-
-            return new Device(this.additionalDeviceToDnssdService(device));
-        }
-
-        return new Device(selectedItem.service);
+        return new Device(this.additionalDeviceToDnssdService(device));
     }
 
     private async forwardOut(srcAddr: string, srcPort: number, destAddr: string, destPort: number): Promise<ssh2.ClientChannel> {
@@ -701,7 +593,7 @@ class ServiceItem implements vscode.QuickPickItem {
     public readonly label: string;
     public readonly description: string | undefined;
 
-    constructor(public service: dnssd.Service) {
+    constructor(public service: DnssdService) {
         this.label = service.name;
         this.description = (<any>service)['ifaceName'];
     }
@@ -712,4 +604,59 @@ interface AdditionalDevice {
     ipAddress: string;
     username: string;
     homeDirectory: string;
+}
+
+//Dnssd data types required by this class
+type TxtRecords = { [key: string]: string };
+
+interface DnssdService {
+    /**
+     * The name of the service. Suitible for displaying to the user.
+     */
+    readonly name: string;
+
+    /**
+     * The service type.
+     */
+    readonly service: string;
+
+    /**
+     * The transport protocol.
+     */
+    readonly transport: 'tcp' | 'udp';
+
+    /**
+     * The host name.
+     */
+    readonly host: string;
+
+    /**
+     * The domain.
+     */
+    readonly domain: string;
+
+    /**
+     * The network interface index
+     */
+    readonly iface: number;
+
+    /**
+     * The IP protocol version.
+     */
+    readonly ipv: 'IPv4' | 'IPv6';
+
+    /**
+     * The IP address.
+     */
+    readonly address: string;
+
+    /**
+     * This IP port.
+     */
+    readonly port: number;
+
+    /**
+     * The txt records as key/value pairs.
+     */
+    readonly txt: TxtRecords;
 }

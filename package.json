@@ -1,7 +1,7 @@
 {
-    "name": "ev3dev-browser",
-    "displayName": "ev3dev-browser",
-    "description": "Browse for ev3dev devices",
+    "name": "ev3dev-browser-nozeroconf",
+    "displayName": "ev3dev-browser-nozeroconf",
+    "description": "Fork of ev3dev-browser without zeroconf/network discovery. Connections are made directly to a device via IP address.",
     "icon": "resources/icons/ev3dev-logo.png",
     "version": "1.2.0",
     "publisher": "ev3dev",
