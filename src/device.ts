@@ -503,13 +503,28 @@ export class Device extends vscode.Disposable {
     }
 
     private static additionalDeviceToDnssdService(device: AdditionalDevice): DnssdService {
-        const txt: TxtRecords = {};
+        const txt: DnssdTxtRecords = {};
         txt['ev3dev.robot.user'] = device.username || 'robot';
         txt['ev3dev.robot.home'] = device.homeDirectory || `/home/${txt['ev3dev.robot.user']}`;
         return <DnssdService>{
             name: device.name,
             address: device.ipAddress,
             ipv: 'IPv4',
+            port: 22,
+            service: 'sftp-ssh',
+            transport: 'tcp',
+            txt: txt
+        };
+    }
+
+    public static getLocalDnssdService(): DnssdService {
+        const txt: DnssdTxtRecords = {};
+        txt['ev3dev.robot.user'] = 'robot';
+        txt['ev3dev.robot.home'] = `/home/robot`;
+        return <DnssdService>{
+            name: 'ev3dev device (USB)',
+            address: 'ev3dev.local',
+            ipv: 'IPv6',
             port: 22,
             service: 'sftp-ssh',
             transport: 'tcp',
@@ -607,7 +622,7 @@ interface AdditionalDevice {
 }
 
 //Dnssd data types required by this class
-type TxtRecords = { [key: string]: string };
+type DnssdTxtRecords = { [key: string]: string };
 
 interface DnssdService {
     /**
@@ -658,5 +673,5 @@ interface DnssdService {
     /**
      * The txt records as key/value pairs.
      */
-    readonly txt: TxtRecords;
+    readonly txt: DnssdTxtRecords;
 }

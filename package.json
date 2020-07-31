@@ -184,7 +184,12 @@
             },
             {
                 "command": "ev3devBrowser.action.pickDevice",
-                "title": "Connect to a device",
+                "title": "Connect to a device (Wifi)",
+                "category": "ev3dev"
+            },
+            {
+                "command": "ev3devBrowser.action.connectLocal",
+                "title": "Connect to a device (USB)",
                 "category": "ev3dev"
             },
             {

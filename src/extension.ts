@@ -44,7 +44,7 @@ export function activate(context: vscode.ExtensionContext): void {
         vscode.commands.registerCommand('ev3devBrowser.deviceTreeItem.captureScreenshot', d => d.captureScreenshot()),
         vscode.commands.registerCommand('ev3devBrowser.deviceTreeItem.showSysinfo', d => d.showSysinfo()),
         vscode.commands.registerCommand('ev3devBrowser.deviceTreeItem.reconnect', d => d.connect()),
-        vscode.commands.registerCommand('ev3devBrowser.deviceTreeItem.connectNew', d => pickDevice()),
+        vscode.commands.registerCommand('ev3devBrowser.deviceTreeItem.connectNew', d => clearDeviceTree()),
         vscode.commands.registerCommand('ev3devBrowser.deviceTreeItem.disconnect', d => d.disconnect()),
         vscode.commands.registerCommand('ev3devBrowser.deviceTreeItem.select', d => d.handleClick()),
         vscode.commands.registerCommand('ev3devBrowser.fileTreeItem.run', f => f.run()),
@@ -54,6 +54,7 @@ export function activate(context: vscode.ExtensionContext): void {
         vscode.commands.registerCommand('ev3devBrowser.fileTreeItem.upload', f => f.upload()),
         vscode.commands.registerCommand('ev3devBrowser.fileTreeItem.select', f => f.handleClick()),
         vscode.commands.registerCommand('ev3devBrowser.action.pickDevice', () => pickDevice()),
+        vscode.commands.registerCommand('ev3devBrowser.action.connectLocal', () => connectLocal()),
         vscode.commands.registerCommand('ev3devBrowser.action.download', () => downloadAll()),
         vscode.commands.registerCommand('ev3devBrowser.action.refresh', () => refresh()),
         vscode.debug.onDidReceiveDebugSessionCustomEvent(e => handleCustomDebugEvent(e)),
@@ -156,6 +157,36 @@ async function pickDevice(): Promise<void> {
                 });
         }
     });
+}
+
+//Same connection logic as pickDevice(), except connects directly to ev3dev.local (used for USB connections)
+async function connectLocal(): Promise<void> {
+    const localDevice = new Device(Device.getLocalDnssdService());
+
+    await vscode.window.withProgress({
+        location: vscode.ProgressLocation.Window,
+        title: "Connecting..."
+    }, async progress => {
+        ev3devBrowserProvider.setDevice(localDevice);
+        try {
+            await localDevice.connect();
+            toastStatusBarMessage(`Connected`);
+        }
+        catch (err) {
+            const retry = 'Retry';
+            vscode.window.showErrorMessage(`Failed to connect via USB: ${err.message}`, retry)
+                .then((value) => {
+                    if (value === retry) {
+                        vscode.commands.executeCommand('ev3devBrowser.action.connectLocal')
+                    }
+                });
+        }
+    });
+}
+
+//Clears the current device from the tree, going back to the "Connect via Wifi" and "Connect via USB" stage
+async function clearDeviceTree(): Promise<void> {
+    ev3devBrowserProvider.setDevice(undefined);
 }
 
 const activeDebugSessions = new Set<string>();
@@ -487,7 +518,8 @@ class Ev3devBrowserProvider extends vscode.Disposable implements vscode.TreeData
         new vscode.EventEmitter<DeviceTreeItem | File | CommandTreeItem>();
     readonly onDidChangeTreeData: vscode.Event<DeviceTreeItem | File | CommandTreeItem> = this._onDidChangeTreeData.event;
     private device: DeviceTreeItem | undefined;
-    private readonly noDeviceTreeItem = new CommandTreeItem('Click here to connect to a device', 'ev3devBrowser.action.pickDevice');
+    private readonly connectViaWifiItem = new CommandTreeItem('Connect via Wifi', 'ev3devBrowser.action.pickDevice');
+    private readonly connectViaUSBItem = new CommandTreeItem('Connect via USB', 'ev3devBrowser.action.connectLocal');
 
     constructor() {
         super(() => {
@@ -542,7 +574,11 @@ class Ev3devBrowserProvider extends vscode.Disposable implements vscode.TreeData
 
     public getChildren(element?: DeviceTreeItem | File | CommandTreeItem): vscode.ProviderResult<(DeviceTreeItem | File | CommandTreeItem)[]> {
         if (!element) {
-            return [this.device || this.noDeviceTreeItem];
+            if (this.device) {
+                return [this.device];
+            } else {
+                return [this.connectViaWifiItem, this.connectViaUSBItem];
+            }
         }
         if (element instanceof DeviceTreeItem) {
             // should always have element.rootDirectory - included in if statement just for type checking
